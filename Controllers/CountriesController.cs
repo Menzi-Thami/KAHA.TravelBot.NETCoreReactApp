@@ -1,6 +1,8 @@
 ﻿using KAHA.TravelBot.NETCoreReactApp.Models;
 using KAHA.TravelBot.NETCoreReactApp.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -10,7 +12,6 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
     [ApiController]
     public class CountriesController : ControllerBase
     {
-
         private readonly ILogger<CountriesController> _logger;
         private readonly TravelBotService _travelBotService;
 
@@ -20,7 +21,7 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
             _travelBotService = travelBotService;
         }
 
-        // GET: api/<CountriesController>
+        // GET: api/Countries/all
         [HttpGet("all")]
         public async Task<ActionResult<IEnumerable<CountryModel>>> GetAllCountries()
         {
@@ -31,13 +32,12 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
             }
             catch (Exception ex)
             {
-                // Log the exception
                 _logger.LogError(ex, "An error occurred while fetching all countries");
                 return StatusCode(500, "An error occurred while fetching all countries. Please try again later.");
             }
         }
 
-        // GET: api/<CountriesController>/top5
+        // GET: api/Countries/top5
         [HttpGet("top5")]
         public async Task<ActionResult<IEnumerable<CountryModel>>> GetTopFive()
         {
@@ -45,7 +45,7 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
             return Ok(countries);
         }
 
-        // GET: api/<CountriesController>/summary
+        // GET: api/Countries/summary?countryNames=country1&countryNames=country2...
         [HttpGet("summary")]
         public async Task<ActionResult<List<CountrySummaryModel>>> GetSummary([FromQuery] List<string> countryNames)
         {
@@ -59,7 +59,7 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
             return Ok(summaries); // Return the list of country summaries
         }
 
-        // POST: api/<CountriesController>
+        // POST: api/Countries/random
         [HttpPost("random")]
         public async Task<ActionResult<CountryModel>> GetRandomCountry()
         {
@@ -83,14 +83,14 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
             }
         }
 
+        // GET: api/Countries/random-southern-hemisphere
         [HttpGet("random-southern-hemisphere")]
         public ActionResult<CountryModel> GetRandomCountryInSouthernHemisphere()
         {
             try
             {
-                var allCountries = _travelBotService.GetAllCountries().Result; // Blocking call, consider making this asynchronous
+                var allCountries = _travelBotService.GetAllCountries().Result;
 
-                // Get a random country in the Southern Hemisphere
                 var randomCountry = _travelBotService.RandomCountryInSouthernHemisphere(allCountries);
 
                 if (randomCountry != null)
@@ -108,7 +108,5 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
                 return StatusCode(500, "An error occurred while fetching a random country in the Southern Hemisphere. Please try again later.");
             }
         }
-
-
     }
 }
