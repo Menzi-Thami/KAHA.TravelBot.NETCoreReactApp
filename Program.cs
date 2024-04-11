@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllersWithViews();
 
 // Register the WeatherForecastService as a scoped service.
-builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+//builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
 
 var app = builder.Build();
 
