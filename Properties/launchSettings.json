@@ -11,7 +11,7 @@
     "KAHA.TravelBot.NETCoreReactApp": {
       "commandName": "Project",
       "launchBrowser": true,
-      "applicationUrl": "https://localhost:7242;http://localhost:5158",
+      "applicationUrl": "https://localhost:44428;",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "ASPNETCORE_HOSTINGSTARTUPASSEMBLIES": "Microsoft.AspNetCore.SpaProxy"

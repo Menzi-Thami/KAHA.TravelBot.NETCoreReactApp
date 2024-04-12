@@ -10,12 +10,12 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class CountriesController : ControllerBase
+    public class Countries : ControllerBase
     {
-        private readonly ILogger<CountriesController> _logger;
+        private readonly ILogger<Countries> _logger;
         private readonly TravelBotService _travelBotService;
 
-        public CountriesController(ILogger<CountriesController> logger, TravelBotService travelBotService)
+        public Countries(ILogger<Countries> logger, TravelBotService travelBotService)
         {
             _logger = logger;
             _travelBotService = travelBotService;
@@ -45,7 +45,7 @@ namespace KAHA.TravelBot.NETCoreReactApp.Controllers
             return Ok(countries);
         }
 
-        // GET: api/Countries/summary?countryNames=country1&countryNames=country2...
+        // GET: api/Countries/summary?
         [HttpGet("summary")]
         public async Task<ActionResult<List<CountrySummaryModel>>> GetSummary([FromQuery] List<string> countryNames)
         {

@@ -1,18 +1,21 @@
 import React, { Component } from 'react';
 import { Container } from 'reactstrap';
 import { NavMenu } from './NavMenu';
+import Home from './Home'; 
+import TravelBot from './TravelBot'; 
 
-export class Layout extends Component {
-  static displayName = Layout.name;
-
-  render() {
-    return (
-      <div>
-        <NavMenu />
-        <Container>
-          {this.props.children}
-        </Container>
-      </div>
-    );
-  }
+class Layout extends Component {
+    render() {
+        return (
+            <div>
+                <NavMenu />
+                <Container>
+                    {this.props.children || <Home />} 
+                    <TravelBot /> 
+                </Container>
+            </div>
+        );
+    }
 }
+
+export default Layout; 

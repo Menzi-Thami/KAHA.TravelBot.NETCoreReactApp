@@ -3,11 +3,10 @@ using KAHA.TravelBot.NETCoreReactApp.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-
 builder.Services.AddControllersWithViews();
 
 // Register the WeatherForecastService as a scoped service.
-//builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+// builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
 
 var app = builder.Build();
 
@@ -21,6 +20,14 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
+
+// Add CORS middleware
+app.UseCors(options =>
+{
+    options.AllowAnyOrigin()
+           .AllowAnyMethod()
+           .AllowAnyHeader();
+});
 
 app.MapControllerRoute(
     name: "default",
