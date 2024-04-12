@@ -17,8 +17,8 @@ namespace KAHA.TravelBot.NETCoreReactApp.Services
 
         public TravelBotService(HttpClient httpClient, ILogger<TravelBotService> logger) 
         {
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _httpClient = httpClient;
+            _logger = logger;
         }
 
         public async Task<List<CountryModel>> GetAllCountries()
