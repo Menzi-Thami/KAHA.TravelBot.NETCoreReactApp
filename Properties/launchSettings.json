@@ -1,29 +1,38 @@
 ﻿{
-  "iisSettings": {
-    "windowsAuthentication": false,
-    "anonymousAuthentication": true,
-    "iisExpress": {
-      "applicationUrl": "http://localhost:61428",
-      "sslPort": 44313
-    }
-  },
-  "profiles": {
-    "KAHA.TravelBot.NETCoreReactApp": {
-      "commandName": "Project",
-      "launchBrowser": true,
-      "applicationUrl": "https://localhost:44428;",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_HOSTINGSTARTUPASSEMBLIES": "Microsoft.AspNetCore.SpaProxy"
-      }
-    },
-    "IIS Express": {
-      "commandName": "IISExpress",
-      "launchBrowser": true,
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_HOSTINGSTARTUPASSEMBLIES": "Microsoft.AspNetCore.SpaProxy"
-      }
-    }
-  }
+    "iisSettings":  {
+                        "windowsAuthentication":  false,
+                        "anonymousAuthentication":  true,
+                        "iisExpress":  {
+                                           "applicationUrl":  "http://localhost:61428",
+                                           "sslPort":  44313
+                                       }
+                    },
+    "profiles":  {
+                     "KAHA.TravelBot.NETCoreReactApp":  {
+                                                            "commandName":  "Project",
+                                                            "launchBrowser":  true,
+                                                            "applicationUrl":  "https://localhost:44428",
+                                                            "environmentVariables":  {
+                                                                                         "ASPNETCORE_ENVIRONMENT":  "Development",
+                                                                                         "ASPNETCORE_HOSTINGSTARTUPASSEMBLIES":  "Microsoft.AspNetCore.SpaProxy"
+                                                                                     }
+                                                        },
+                     "BackendOnly":  {
+                                         "commandName":  "Project",
+                                         "launchUrl":  "swagger",
+                                         "environmentVariables":  {
+                                                                      "ASPNETCORE_ENVIRONMENT":  "Development"
+                                                                  },
+                                         "launchBrowser":  true,
+                                         "applicationUrl":  "https://localhost:7001"
+                                     },
+                     "IIS Express":  {
+                                         "commandName":  "IISExpress",
+                                         "launchBrowser":  true,
+                                         "environmentVariables":  {
+                                                                      "ASPNETCORE_ENVIRONMENT":  "Development"
+                                                                  },
+                                         "launchUrl":  "swagger"
+                                     }
+                 }
 }
