@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "KAHA.TravelBot.NETCoreReactApp",
     "version":  "0.1.0",
     "private":  true,
@@ -60,7 +60,7 @@
                      },
     "browserslist":  {
                          "production":  [
-                                            "\u003e0.2%",
+                                            "0.2%",
                                             "not dead",
                                             "not op_mini all"
                                         ],
