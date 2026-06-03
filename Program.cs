@@ -5,14 +5,21 @@ using Polly.Extensions.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Core services
+// ─────────────────────────────────────────────────────────────────────────────
 builder.Services.AddControllersWithViews();
 builder.Services.AddMemoryCache();
 
-// ── Strongly-typed config (Patch P4) ──────────────────────────────────────
+// ✅ Swagger services
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// ── Strongly-typed config (Patch P4) ─────────────────────────────────────────
 builder.Services.Configure<TravelBotOptions>(
     builder.Configuration.GetSection("TravelBot"));
 
-// ── Polly resilience policy (Patch P3) ────────────────────────────────────
+// ── Polly resilience policy (Patch P3) ───────────────────────────────────────
 // Retry up to 3 times with exponential back-off on transient HTTP errors.
 // Circuit-breaker opens after 5 consecutive failures for 30 seconds.
 var retryPolicy = HttpPolicyExtensions
@@ -28,10 +35,11 @@ var circuitBreakerPolicy = HttpPolicyExtensions
     .CircuitBreakerAsync(
         handledEventsAllowedBeforeBreaking: 5,
         durationOfBreak: TimeSpan.FromSeconds(30),
-        onBreak:   (_, d) => Console.WriteLine($"[Polly] Circuit open for {d.TotalSeconds}s"),
-        onReset:   ()     => Console.WriteLine("[Polly] Circuit reset"),
-        onHalfOpen: ()    => Console.WriteLine("[Polly] Circuit half-open"));
+        onBreak: (_, d) => Console.WriteLine($"[Polly] Circuit open for {d.TotalSeconds}s"),
+        onReset: () => Console.WriteLine("[Polly] Circuit reset"),
+        onHalfOpen: () => Console.WriteLine("[Polly] Circuit half-open"));
 
+// ✅ Correct HttpClient + DI setup (NO singleton override)
 builder.Services
     .AddHttpClient<ITravelBotService, TravelBotService>(client =>
     {
@@ -41,29 +49,37 @@ builder.Services
     .AddPolicyHandler(retryPolicy)
     .AddPolicyHandler(circuitBreakerPolicy);
 
-// ── Register as Singleton (Bonus task 8) ──────────────────────────────────
-// IHttpClientFactory manages the underlying handler lifetime; the service
-// itself is singleton so the IMemoryCache country list persists for the
-// full application lifetime.
-builder.Services.AddSingleton<ITravelBotService>(sp =>
-{
-    var factory = sp.GetRequiredService<IHttpClientFactory>();
-    var client  = factory.CreateClient(nameof(TravelBotService));
-    var cache   = sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
-    var logger  = sp.GetRequiredService<ILogger<TravelBotService>>();
-    var options = sp.GetRequiredService<IOptions<TravelBotOptions>>();
-    return new TravelBotService(client, cache, logger, options);
-});
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Build app
+// ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
 
-if (!app.Environment.IsDevelopment()) app.UseHsts();
+// ✅ Enable Swagger in development
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 app.UseHttpsRedirection();
 app.UseStaticFiles();
+
 app.UseRouting();
+
 app.UseCors(o => o.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
-app.MapControllerRoute("default", "{controller}/{action=Index}/{id?}");
+
+// Map controllers
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller}/{action=Index}/{id?}");
+
 app.MapFallbackToFile("index.html");
+
 app.Run();
 
 public partial class Program { }

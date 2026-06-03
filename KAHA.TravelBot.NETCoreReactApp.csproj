@@ -14,27 +14,26 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.SpaProxy"           Version="8.0.0"  />
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory"     Version="8.0.0"  />
-    <PackageReference Include="Microsoft.Extensions.Http.Polly"         Version="8.0.0"  />
-    <PackageReference Include="Newtonsoft.Json"                         Version="13.0.3" />
-    <PackageReference Include="Polly"                                   Version="8.3.1"  />
-    <PackageReference Include="Polly.Extensions.Http"                   Version="3.0.0"  />
+    <PackageReference Include="Microsoft.AspNetCore.SpaProxy" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="8.0.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Polly" Version="8.3.1" />
+    <PackageReference Include="Polly.Extensions.Http" Version="3.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.1" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Remove="$(SpaRoot)**" />
-    <None   Remove="$(SpaRoot)**" />
-    <None   Include="$(SpaRoot)**" Exclude="$(SpaRoot)node_modules\**" />
+    <None Remove="$(SpaRoot)**" />
+    <None Include="$(SpaRoot)**" Exclude="$(SpaRoot)node_modules\**" />
   </ItemGroup>
 
-  <Target Name="DebugEnsureNodeEnv" BeforeTargets="Build"
-          Condition=" '$(Configuration)' == 'Debug' And !Exists('$(SpaRoot)node_modules') ">
+  <Target Name="DebugEnsureNodeEnv" BeforeTargets="Build" Condition=" '$(Configuration)' == 'Debug' And !Exists('$(SpaRoot)node_modules') ">
     <Exec Command="node --version" ContinueOnError="true">
       <Output TaskParameter="ExitCode" PropertyName="ErrorCode" />
     </Exec>
-    <Error Condition="'$(ErrorCode)' != '0'"
-           Text="Node.js is required. Install from https://nodejs.org/" />
+    <Error Condition="'$(ErrorCode)' != '0'" Text="Node.js is required. Install from https://nodejs.org/" />
     <Message Importance="high" Text="Restoring npm dependencies..." />
     <Exec WorkingDirectory="$(SpaRoot)" Command="npm install" />
   </Target>
@@ -44,8 +43,7 @@
     <Exec WorkingDirectory="$(SpaRoot)" Command="npm run build" />
     <ItemGroup>
       <DistFiles Include="$(SpaRoot)build\**" />
-      <ResolvedFileToPublish Include="@(DistFiles->'%(FullPath)')"
-                             Exclude="@(ResolvedFileToPublish)">
+      <ResolvedFileToPublish Include="@(DistFiles->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
         <RelativePath>wwwroot\%(RecursiveDir)%(FileName)%(Extension)</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
