@@ -1,211 +1,208 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
-using KAHA.TravelBot.NETCoreReactApp.Models;
-using Microsoft.Extensions.Logging;
+﻿using KAHA.TravelBot.NETCoreReactApp.Models;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace KAHA.TravelBot.NETCoreReactApp.Services
+namespace KAHA.TravelBot.NETCoreReactApp.Services;
+
+/// <summary>
+/// Singleton service — country list is memory-cached to avoid hammering the
+/// external API on every request.
+///
+/// Patches applied vs original:
+///   [P1] Random.Shared — no per-call allocation, better distribution
+///   [P2] Sunrise/sunset returned as UTC strings — avoids server-timezone
+///        ambiguity (.ToLocalTime() was wrong in a hosted environment)
+///   [P3] HTTP resilience (retry + circuit-breaker) configured in Program.cs
+///        via Polly — the service itself just calls _httpClient normally
+///   [P4] All external URLs read from TravelBotOptions (appsettings.json)
+/// </summary>
+public class TravelBotService : ITravelBotService
 {
-    public class TravelBotService
+    // KAHA office: Cavendish Square, Cape Town
+    private const double KahaLatitude  = -33.9759724;
+    private const double KahaLongitude =  18.4592032;
+
+    private const string CountriesCacheKey = "all_countries";
+
+    private readonly HttpClient              _httpClient;
+    private readonly IMemoryCache            _cache;
+    private readonly ILogger<TravelBotService> _logger;
+    private readonly TravelBotOptions        _options;
+
+    public TravelBotService(
+        HttpClient                    httpClient,
+        IMemoryCache                  cache,
+        ILogger<TravelBotService>     logger,
+        IOptions<TravelBotOptions>    options)
     {
-        private readonly HttpClient _httpClient;
-        private readonly ILogger<TravelBotService> _logger; 
+        _httpClient = httpClient;
+        _cache      = cache;
+        _logger     = logger;
+        _options    = options.Value;
+    }
 
-        public TravelBotService(HttpClient httpClient, ILogger<TravelBotService> logger) 
+    // ── Task 1: GetAllCountries (cached) ──────────────────────────────────────
+
+    public async Task<List<CountryModel>> GetAllCountriesAsync()
+    {
+        if (_cache.TryGetValue(CountriesCacheKey, out List<CountryModel>? cached) && cached is not null)
+            return cached;
+
+        _logger.LogInformation("Cache miss — fetching from {Url}", _options.RestCountriesUrl);
+
+        // [P3] Retry/circuit-breaker is on the HttpClient pipeline (Program.cs)
+        var json = await _httpClient.GetStringAsync(_options.RestCountriesUrl); // [P4]
+        var countries = JsonConvert.DeserializeObject<List<CountryModel>>(json)
+                        ?? throw new InvalidOperationException("RestCountries API returned null.");
+
+        var expiry = TimeSpan.FromHours(_options.CacheHours);
+        _cache.Set(CountriesCacheKey, countries, expiry);
+
+        _logger.LogInformation("Cached {Count} countries for {Hours}h", countries.Count, _options.CacheHours);
+        return countries;
+    }
+
+    // ── Task 2: Top 5 Southern Hemisphere by population ───────────────────────
+
+    public async Task<List<TopFiveCountryModel>> GetTopFiveCountriesAsync()
+    {
+        var all = await GetAllCountriesAsync();
+
+        return all
+            .Where(c => c.IsInSouthernHemisphere)
+            .OrderByDescending(c => c.Population)
+            .Take(5)
+            .Select(c => new TopFiveCountryModel
+            {
+                Name       = c.CommonName,
+                Capital    = c.CapitalCity,
+                Population = c.Population,
+                Latitude   = c.Latitude,
+                Longitude  = c.Longitude
+            })
+            .ToList();
+    }
+
+    // ── Task 4: Country summary ───────────────────────────────────────────────
+
+    public async Task<CountrySummaryModel?> GetCountrySummaryAsync(string countryName)
+    {
+        var all = await GetAllCountriesAsync();
+
+        // Case-insensitive match on common name
+        var country = all.FirstOrDefault(c =>
+            c.CommonName.Equals(countryName, StringComparison.OrdinalIgnoreCase));
+
+        if (country is null)
         {
-            _httpClient = httpClient;
-            _logger = logger;
+            _logger.LogWarning("Country not found: {CountryName}", countryName);
+            return null;
         }
 
-        public async Task<List<CountryModel>> GetAllCountries()
+        var (sunrise, sunset) = await GetSunriseSunsetTimesAsync(country.Latitude, country.Longitude);
+        var languages = country.Languages?.Values.ToList() ?? [];
+
+        return new CountrySummaryModel
         {
-            var apiUrl = "https://restcountries.com/v3.1/all";
-            var response = await _httpClient.GetStringAsync(apiUrl);
-            var countries = JsonConvert.DeserializeObject<List<CountryModel>>(response);
-            return countries;
+            Name               = country.CommonName,
+            Capital            = country.CapitalCity,
+            Population         = country.Population,
+            Latitude           = country.Latitude,
+            Longitude          = country.Longitude,
+            Sunrise            = sunrise,
+            Sunset             = sunset,
+            OfficialLanguages  = languages.Count > 0 ? string.Join(", ", languages) : "N/A",
+            TotalLanguages     = languages.Count,
+            DriveSide          = country.Car?.Side ?? "unknown",
+            DistanceFromKahaKm = CalculateHaversineDistanceKm(
+                                    country.Latitude, country.Longitude,
+                                    KahaLatitude,     KahaLongitude)
+        };
+    }
+
+    // ── Task 6 (Bonus): Random Southern Hemisphere country ────────────────────
+
+    public async Task<CountrySummaryModel?> GetRandomSouthernHemisphereCountryAsync()
+    {
+        var all     = await GetAllCountriesAsync();
+        var southern = all.Where(c => c.IsInSouthernHemisphere).ToList();
+
+        if (southern.Count == 0) return null;
+
+        // [P1] Random.Shared — thread-safe, no per-call allocation, better distribution
+        var picked = southern[Random.Shared.Next(southern.Count)];
+        return await GetCountrySummaryAsync(picked.CommonName);
+    }
+
+    // ── Task 3: Sunrise / Sunset ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns sunrise and sunset as UTC time strings (e.g. "06:23 AM UTC").
+    ///
+    /// [P2] We deliberately return UTC rather than calling .ToLocalTime().
+    /// .ToLocalTime() uses the *server's* timezone — meaningless for a hosted
+    /// API and confusing when the country is in a different timezone. Returning
+    /// UTC with a clear label is honest; the frontend can localise if needed.
+    /// </summary>
+    public async Task<(string Sunrise, string Sunset)> GetSunriseSunsetTimesAsync(
+        double latitude, double longitude)
+    {
+        try
+        {
+            // [P4] URL base from config; formatted=0 gives ISO 8601 UTC strings
+            var url      = $"{_options.SunriseSunsetUrl}?lat={latitude}&lng={longitude}&formatted=0";
+            var response = await _httpClient.GetStringAsync(url);
+            var obj      = JObject.Parse(response);
+
+            if (obj["status"]?.ToString() != "OK")
+            {
+                _logger.LogWarning("Sunrise-sunset API non-OK for ({Lat},{Lng})", latitude, longitude);
+                return ("N/A", "N/A");
+            }
+
+            var results = obj["results"]!;
+
+            // [P2] Parse as UTC, format clearly — no server-TZ conversion
+            var sunrise = DateTime.Parse(results["sunrise"]!.ToString(),
+                              null, System.Globalization.DateTimeStyles.RoundtripKind);
+            var sunset  = DateTime.Parse(results["sunset"]!.ToString(),
+                              null, System.Globalization.DateTimeStyles.RoundtripKind);
+
+            return (
+                sunrise.ToString("hh:mm tt") + " UTC",
+                sunset.ToString("hh:mm tt")  + " UTC"
+            );
         }
-
-        // Top 5 Countries by population size
-        public async Task<List<CountryModel>> GetTopFiveCountries()
+        catch (Exception ex)
         {
-            try
-            {
-                var allCountries = await GetAllCountries();
-
-                var topFiveCountries = allCountries.OrderByDescending(c => c.Population).Take(5).ToList();
-
-                return topFiveCountries;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An error occurred while fetching top five countries by population");
-
-                return null;
-            }
-        }
-
-        public async Task<(CountrySummaryModel, string)> GetCountrySummary(string countryName)
-        {
-            try
-            {
-                var allCountries = await GetAllCountries();
-
-                // Find the country by name
-                var country = allCountries.FirstOrDefault(c => c.Name.Equals(countryName, StringComparison.OrdinalIgnoreCase));
-
-                if (country == null)
-                {
-                    var errorMessage = ("Country not found.");
-                    _logger.LogWarning(errorMessage);
-                    return (null, errorMessage);
-                }
-
-                // Get sunrise and sunset times for the capital city
-                var capital = country.Capital;
-                if (string.IsNullOrEmpty(capital))
-                {
-                    var errorMessage = $"Capital not found for '{countryName}'.";
-                    _logger.LogWarning(errorMessage);
-                    return (null, errorMessage);
-                }
-                var sunriseSunsetTimes = await GetSunriseSunsetTimes(country.Latitude, country.Longitude);
-
-                if (sunriseSunsetTimes.Item1 == null || sunriseSunsetTimes.Item2 == null)
-                {
-                    var errorMessage = $"Failed to fetch sunrise and sunset times for '{capital}'.";
-                    _logger.LogWarning(errorMessage);
-                    return (null, errorMessage);
-                }
-
-                var languages = country.Languages;
-                if (languages == null)
-                {
-                    var errorMessage = $"Languages not found for '{countryName}'.";
-                    _logger.LogWarning(errorMessage);
-                    return (null, errorMessage);
-                }
-
-                // Construct the country summary
-                var countrySummary = new CountrySummaryModel
-                {
-                    Name = countryName,
-                    Capital = capital,
-                    Sunrise = sunriseSunsetTimes.Item1.ToString(),
-                    Sunset = sunriseSunsetTimes.Item2.ToString(),
-                    OfficialLanguage = languages != null && languages.Any() ? string.Join(", ", languages) : "N/A",
-                    TotalLanguages = languages != null ? languages.Count() : 0
-                };
-
-                return (countrySummary, null); 
-            }
-            catch (Exception ex)
-            {
-                var errorMessage = $"An error occurred while getting country summary for '{countryName}': {ex.Message}";
-                _logger.LogError(ex, errorMessage);
-                return (null, errorMessage);
-            }
-        }
-        public async Task<(List<CountrySummaryModel>, string)> GetCountrySummaries(List<string> countryNames)
-        {
-            var countrySummaries = new List<CountrySummaryModel>();
-            var errorMessages = new List<string>();
-
-            try
-            {
-                foreach (var countryName in countryNames)
-                {
-                    var (summary, errorMessage) = await GetCountrySummary(countryName);
-                    if (summary != null)
-                    {
-                        countrySummaries.Add(summary);
-                    }
-                    else
-                    {
-                        errorMessages.Add(errorMessage);
-                    }
-                }
-
-                return (countrySummaries, string.Join("; ", errorMessages));
-            }
-            catch (Exception ex)
-            {
-                var errorMessage = $"An error occurred while getting country summaries: {ex.Message}";
-                _logger.LogError(ex, errorMessage);
-                errorMessages.Add(errorMessage);
-                return (null, string.Join("; ", errorMessages));
-            }
-        }
-
-        public async Task<CountryModel> GetRandomCountry()
-        {
-            try
-            {
-                var allCountries = await GetAllCountries();
-
-                // Select a random country
-                var random = new Random();
-                var randomIndex = random.Next(0, allCountries.Count);
-                var randomCountry = allCountries[randomIndex];
-
-                return randomCountry;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An error occurred while getting a random country");
-                throw; 
-            }
-        }
-
-
-        public CountryModel RandomCountryInSouthernHemisphere(List<CountryModel> countries)
-        {
-            // Subtle bug in code fix, less than 0 altitude for countries in the Southern Hemisphere
-            var countriesInSouthernHemisphere = countries.Where(x => x.Latitude < 0);
-            var random = new Random();
-            var randomIndex = random.Next(0, countriesInSouthernHemisphere.Count());
-            return countriesInSouthernHemisphere.ElementAt(randomIndex);
-        }
-
-        public async Task<(DateTime, DateTime)> GetSunriseSunsetTimes(float latitude, float longitude)
-        {
-            // Construct the API URL with the latitude and longitude parameters
-            var apiUrl = $"https://api.sunrise-sunset.org/json?lat={latitude}&lng={longitude}";
-
-            using (var httpClient = new HttpClient())
-            {
-                var response = await httpClient.GetAsync(apiUrl);
-                if (response.IsSuccessStatusCode)
-                {
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    var responseObject = JObject.Parse(responseContent);
-                    var status = responseObject["status"].ToString();
-
-                    if (status == "OK")
-                    {
-                        var results = responseObject["results"];
-                        var sunrise = DateTime.Parse(results["sunrise"].ToString());
-                        var sunset = DateTime.Parse(results["sunset"].ToString());
-
-                        return (sunrise, sunset);
-                    }
-                    else
-                    {
-                        var errorMessage = $"Failed to retrieve sunrise and sunset times. Status: {status}";
-                        _logger.LogError(errorMessage);
-                        throw new Exception(errorMessage);
-                    }
-                }
-                else
-                {
-                    var errorMessage = $"Failed to retrieve sunrise and sunset times. Status code: {response.StatusCode}";
-                    _logger.LogError(errorMessage);
-                    throw new Exception(errorMessage);
-                }
-            }
+            _logger.LogError(ex, "Failed to fetch sunrise/sunset for ({Lat},{Lng})", latitude, longitude);
+            return ("N/A", "N/A");
         }
     }
+
+    // ── Task 7 (Bonus): Haversine distance ───────────────────────────────────
+
+    /// <summary>
+    /// Great-circle distance between two coordinates using the Haversine formula.
+    /// Returns kilometres, rounded to 1 decimal place.
+    /// </summary>
+    public static double CalculateHaversineDistanceKm(
+        double lat1, double lon1,
+        double lat2, double lon2)
+    {
+        const double R = 6371.0; // Earth radius in km
+
+        var dLat = ToRadians(lat2 - lat1);
+        var dLon = ToRadians(lon2 - lon1);
+
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
+              + Math.Cos(ToRadians(lat1)) * Math.Cos(ToRadians(lat2))
+              * Math.Sin(dLon / 2)        * Math.Sin(dLon / 2);
+
+        return Math.Round(R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a)), 1);
+    }
+
+    private static double ToRadians(double deg) => deg * Math.PI / 180.0;
 }

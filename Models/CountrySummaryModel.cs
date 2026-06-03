@@ -1,14 +1,21 @@
-﻿namespace KAHA.TravelBot.NETCoreReactApp.Models
-{
-    public class CountrySummaryModel : CountryModel
-    {
-        public string Name { get; set; }
-        public string Capital { get; set; }
-        public string Sunrise { get; set; }
-        public string Sunset { get; set; }
-        public string OfficialLanguage { get; set; }
-        public string DriveSide { get; set; }
+﻿namespace KAHA.TravelBot.NETCoreReactApp.Models;
 
-        public int TotalLanguages { get; set; }
-    }
+/// <summary>
+/// Client-facing DTO for full country detail.
+/// Deliberately does NOT inherit CountryModel — keeps internal API shape
+/// decoupled from the public contract.
+/// </summary>
+public class CountrySummaryModel
+{
+    public string Name               { get; set; } = string.Empty;
+    public string Capital            { get; set; } = string.Empty;
+    public long   Population         { get; set; }
+    public double Latitude           { get; set; }
+    public double Longitude          { get; set; }
+    public string Sunrise            { get; set; } = string.Empty;
+    public string Sunset             { get; set; } = string.Empty;
+    public string OfficialLanguages  { get; set; } = string.Empty;
+    public int    TotalLanguages     { get; set; }
+    public string DriveSide          { get; set; } = string.Empty;
+    public double DistanceFromKahaKm { get; set; }
 }

@@ -1,112 +1,75 @@
 ﻿using KAHA.TravelBot.NETCoreReactApp.Models;
 using KAHA.TravelBot.NETCoreReactApp.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
-namespace KAHA.TravelBot.NETCoreReactApp.Controllers
+namespace KAHA.TravelBot.NETCoreReactApp.Controllers;
+
+[Route("api/[controller]")]
+[ApiController]
+public class CountriesController : ControllerBase
 {
-    [Route("api/[controller]")]
-    [ApiController]
-    public class Countries : ControllerBase
+    private readonly ITravelBotService           _service;
+    private readonly ILogger<CountriesController> _logger;
+
+    public CountriesController(ITravelBotService service, ILogger<CountriesController> logger)
     {
-        private readonly ILogger<Countries> _logger;
-        private readonly TravelBotService _travelBotService;
+        _service = service;
+        _logger  = logger;
+    }
 
-        public Countries(ILogger<Countries> logger, TravelBotService travelBotService)
+    /// <summary>Top 5 most populous Southern Hemisphere countries.</summary>
+    [HttpGet("top5")]
+    [ProducesResponseType(typeof(IEnumerable<TopFiveCountryModel>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetTopFive()
+    {
+        try   { return Ok(await _service.GetTopFiveCountriesAsync()); }
+        catch (Exception ex)
         {
-            _logger = logger;
-            _travelBotService = travelBotService;
+            _logger.LogError(ex, "Error fetching top 5");
+            return StatusCode(500, "An error occurred fetching top 5 countries.");
         }
+    }
 
-        // GET: api/Countries/all
-        [HttpGet("all")]
-        public async Task<ActionResult<IEnumerable<CountryModel>>> GetAllCountries()
+    /// <summary>Full country summary by name (case-insensitive).</summary>
+    [HttpGet("summary")]
+    [ProducesResponseType(typeof(CountrySummaryModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSummary([FromQuery] string countryName)
+    {
+        if (string.IsNullOrWhiteSpace(countryName))
+            return BadRequest("countryName is required.");
+
+        try
         {
-            try
-            {
-                var countries = await _travelBotService.GetAllCountries();
-                return Ok(countries);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An error occurred while fetching all countries");
-                return StatusCode(500, "An error occurred while fetching all countries. Please try again later.");
-            }
+            var summary = await _service.GetCountrySummaryAsync(countryName);
+            return summary is null
+                ? NotFound($"Country '{countryName}' not found.")
+                : Ok(summary);
         }
-
-        // GET: api/Countries/top5
-        [HttpGet("top5")]
-        public async Task<ActionResult<IEnumerable<CountryModel>>> GetTopFive()
+        catch (Exception ex)
         {
-            var countries = await _travelBotService.GetTopFiveCountries();
-            return Ok(countries);
+            _logger.LogError(ex, "Error fetching summary for {Name}", countryName);
+            return StatusCode(500, $"An error occurred fetching summary for '{countryName}'.");
         }
+    }
 
-        // GET: api/Countries/summary?
-        [HttpGet("summary")]
-        public async Task<ActionResult<List<CountrySummaryModel>>> GetSummary([FromQuery] List<string> countryNames)
+    /// <summary>Random Southern Hemisphere country summary.</summary>
+    [HttpGet("surprise")]
+    [ProducesResponseType(typeof(CountrySummaryModel), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetSurprise()
+    {
+        try
         {
-            var (summaries, errorMessage) = await _travelBotService.GetCountrySummaries(countryNames);
-
-            if (summaries == null)
-            {
-                return NotFound(errorMessage); // Return the error message if any country summary is not found
-            }
-
-            return Ok(summaries); // Return the list of country summaries
+            var summary = await _service.GetRandomSouthernHemisphereCountryAsync();
+            return summary is null
+                ? NotFound("No Southern Hemisphere countries found.")
+                : Ok(summary);
         }
-
-        // POST: api/Countries/random
-        [HttpPost("random")]
-        public async Task<ActionResult<CountryModel>> GetRandomCountry()
+        catch (Exception ex)
         {
-            try
-            {
-                var randomCountry = await _travelBotService.GetRandomCountry();
-
-                if (randomCountry != null)
-                {
-                    return Ok(randomCountry);
-                }
-                else
-                {
-                    return NotFound("No random country found");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An error occurred while fetching a random country");
-                return StatusCode(500, "An error occurred while fetching a random country. Please try again later.");
-            }
-        }
-
-        // GET: api/Countries/random-southern-hemisphere
-        [HttpGet("random-southern-hemisphere")]
-        public ActionResult<CountryModel> GetRandomCountryInSouthernHemisphere()
-        {
-            try
-            {
-                var allCountries = _travelBotService.GetAllCountries().Result;
-
-                var randomCountry = _travelBotService.RandomCountryInSouthernHemisphere(allCountries);
-
-                if (randomCountry != null)
-                {
-                    return Ok(randomCountry);
-                }
-                else
-                {
-                    return NotFound("No random country found in the Southern Hemisphere");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An error occurred while fetching a random country in the Southern Hemisphere");
-                return StatusCode(500, "An error occurred while fetching a random country in the Southern Hemisphere. Please try again later.");
-            }
+            _logger.LogError(ex, "Error fetching surprise country");
+            return StatusCode(500, "An error occurred fetching a random country.");
         }
     }
 }
