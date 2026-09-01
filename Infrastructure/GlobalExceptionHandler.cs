@@ -39,15 +39,23 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
 
         httpContext.Response.StatusCode = status;
 
+        // Never leak raw exception messages (which can carry connection strings,
+        // stack internals, upstream URLs, etc.) to the client on server-side
+        // failures. Only the controlled messages on client (4xx) errors are safe
+        // to surface; everything >= 500 gets the generic title instead. The full
+        // exception is still logged above for diagnostics.
+        var detail = status < StatusCodes.Status500InternalServerError
+            ? exception.Message
+            : title;
+
         return await _problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,
-            Exception = exception,
             ProblemDetails = new ProblemDetails
             {
                 Status = status,
                 Title = title,
-                Detail = exception.Message
+                Detail = detail
             }
         });
     }
