@@ -1,87 +1,50 @@
-﻿using KAHA.TravelBot.NETCoreReactApp.Models;
+using KAHA.TravelBot.NETCoreReactApp.Domain;
+using KAHA.TravelBot.NETCoreReactApp.Exceptions;
+using KAHA.TravelBot.NETCoreReactApp.ExternalApis.RestCountries;
+using KAHA.TravelBot.NETCoreReactApp.ExternalApis.SunriseSunset;
+using KAHA.TravelBot.NETCoreReactApp.Models;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace KAHA.TravelBot.NETCoreReactApp.Services;
 
-public class TravelBotService : ITravelBotService
+/// <summary>
+/// Business logic for the travel bot. Composes the RestCountries and
+/// sunrise/sunset clients, applies caching, and shapes the public DTOs.
+/// Holds no I/O of its own — all outbound calls go through injected abstractions.
+/// </summary>
+public sealed class TravelBotService : ITravelBotService
 {
-    // KAHA office: Cavendish Square, Cape Town
+    // KAHA office: Cavendish Square, Cape Town.
     private const double KahaLatitude = -33.9759724;
     private const double KahaLongitude = 18.4592032;
 
     private const string CountriesCacheKey = "all_countries";
 
-    private readonly HttpClient _httpClient;
+    private readonly IRestCountriesClient _countriesClient;
+    private readonly ISunriseSunsetClient _sunriseSunsetClient;
     private readonly IMemoryCache _cache;
-    private readonly ILogger<TravelBotService> _logger;
     private readonly TravelBotOptions _options;
+    private readonly ILogger<TravelBotService> _logger;
 
     public TravelBotService(
-        HttpClient httpClient,
+        IRestCountriesClient countriesClient,
+        ISunriseSunsetClient sunriseSunsetClient,
         IMemoryCache cache,
-        ILogger<TravelBotService> logger,
-        IOptions<TravelBotOptions> options)
+        IOptions<TravelBotOptions> options,
+        ILogger<TravelBotService> logger)
     {
-        _httpClient = httpClient;
+        _countriesClient = countriesClient;
+        _sunriseSunsetClient = sunriseSunsetClient;
         _cache = cache;
-        _logger = logger;
         _options = options.Value;
-
-        // ✅ FIX: Ensure headers are set (prevents 400 from RestCountries)
-        _httpClient.DefaultRequestHeaders.Clear();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "TravelBot-App");
-        _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+        _logger = logger;
     }
 
-    // ── Task 1: GetAllCountries (cached) ──────────────────────────────────────
-    public async Task<List<CountryModel>> GetAllCountriesAsync()
-{
-    try
+    public async Task<IReadOnlyList<TopFiveCountryModel>> GetTopFiveCountriesAsync(
+        CancellationToken cancellationToken = default)
     {
-        if (_cache.TryGetValue(CountriesCacheKey, out List<CountryModel>? cached) && cached is not null)
-            return cached;
-
-        _logger.LogInformation("Cache miss — fetching from {Url}", _options.RestCountriesUrl);
-
-        var response = await _httpClient.GetAsync(_options.RestCountriesUrl);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync();
-            _logger.LogError("RestCountries API failed: {Status} - {Error}", response.StatusCode, error);
-            throw new Exception($"API failed: {response.StatusCode}");
-        }
-
-        var json = await response.Content.ReadAsStringAsync();
-
-// ✅ DEBUG: Log first part of JSON
-_logger.LogInformation("RAW JSON SAMPLE: {Json}",
-    json.Substring(0, Math.Min(json.Length, 1000)));
-
-        var countries = JsonConvert.DeserializeObject<List<CountryModel>>(json)
-                        ?? throw new InvalidOperationException("RestCountries API returned null.");
-
-        var expiry = TimeSpan.FromHours(_options.CacheHours);
-        _cache.Set(CountriesCacheKey, countries, expiry);
-
-        _logger.LogInformation("Cached {Count} countries for {Hours}h", countries.Count, _options.CacheHours);
-
-        return countries;
-}
-catch (Exception ex)
-{
-    _logger.LogError(ex, "GetAllCountriesAsync FAILED");
-    throw;
-}
-    }
-
-    // ── Task 2: Top 5 Southern Hemisphere ─────────────────────────────────────
-    public async Task<List<TopFiveCountryModel>> GetTopFiveCountriesAsync()
-    {
-        var all = await GetAllCountriesAsync();
+        var all = await GetAllCountriesAsync(cancellationToken);
 
         return all
             .Where(c => c.IsInSouthernHemisphere)
@@ -89,8 +52,8 @@ catch (Exception ex)
             .Take(5)
             .Select(c => new TopFiveCountryModel
             {
-                Name = c.CommonName,
-                Capital = c.CapitalCity,
+                Name = c.Name,
+                Capital = c.Capital,
                 Population = c.Population,
                 Latitude = c.Latitude,
                 Longitude = c.Longitude
@@ -98,97 +61,76 @@ catch (Exception ex)
             .ToList();
     }
 
-    // ── Task 4: Country Summary ───────────────────────────────────────────────
-    public async Task<CountrySummaryModel?> GetCountrySummaryAsync(string countryName)
+    public async Task<CountrySummaryModel> GetCountrySummaryAsync(
+        string countryName, CancellationToken cancellationToken = default)
     {
-        var all = await GetAllCountriesAsync();
+        var all = await GetAllCountriesAsync(cancellationToken);
 
         var country = all.FirstOrDefault(c =>
-            c.CommonName.Equals(countryName, StringComparison.OrdinalIgnoreCase));
+            c.Name.Equals(countryName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new NotFoundException($"Country '{countryName}' not found.");
 
-        if (country is null)
-        {
-            _logger.LogWarning("Country not found: {CountryName}", countryName);
-            return null;
-        }
+        return await BuildSummaryAsync(country, cancellationToken);
+    }
 
-        var (sunrise, sunset) = await GetSunriseSunsetTimesAsync(country.Latitude, country.Longitude);
-        var languages = country.Languages?.Values.ToList() ?? [];
+    public async Task<CountrySummaryModel> GetRandomSouthernHemisphereCountryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var all = await GetAllCountriesAsync(cancellationToken);
+        var southern = all.Where(c => c.IsInSouthernHemisphere).ToList();
+
+        if (southern.Count == 0)
+            throw new NotFoundException("No Southern Hemisphere countries found.");
+
+        var picked = southern[Random.Shared.Next(southern.Count)];
+        return await BuildSummaryAsync(picked, cancellationToken);
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────────────
+
+    private async Task<IReadOnlyList<Country>> GetAllCountriesAsync(CancellationToken cancellationToken)
+    {
+        if (_cache.TryGetValue(CountriesCacheKey, out IReadOnlyList<Country>? cached) && cached is not null)
+            return cached;
+
+        var countries = await _countriesClient.GetAllCountriesAsync(cancellationToken);
+
+        _cache.Set(CountriesCacheKey, countries, TimeSpan.FromHours(_options.CacheHours));
+        _logger.LogInformation("Cached {Count} countries for {Hours}h", countries.Count, _options.CacheHours);
+
+        return countries;
+    }
+
+    private async Task<CountrySummaryModel> BuildSummaryAsync(Country country, CancellationToken cancellationToken)
+    {
+        var times = await _sunriseSunsetClient.GetTimesAsync(
+            country.Latitude, country.Longitude, cancellationToken);
 
         return new CountrySummaryModel
         {
-            Name = country.CommonName,
-            Capital = country.CapitalCity,
+            Name = country.Name,
+            Capital = country.Capital,
             Population = country.Population,
             Latitude = country.Latitude,
             Longitude = country.Longitude,
-            Sunrise = sunrise,
-            Sunset = sunset,
-            OfficialLanguages = languages.Count > 0 ? string.Join(", ", languages) : "N/A",
-            TotalLanguages = languages.Count,
-            DriveSide = country.Car?.Side ?? "unknown",
+            Sunrise = FormatTime(times?.Sunrise),
+            Sunset = FormatTime(times?.Sunset),
+            OfficialLanguages = country.Languages.Count > 0 ? string.Join(", ", country.Languages) : "N/A",
+            TotalLanguages = country.Languages.Count,
+            DriveSide = country.DriveSide,
             DistanceFromKahaKm = CalculateHaversineDistanceKm(
-                country.Latitude, country.Longitude,
-                KahaLatitude, KahaLongitude)
+                country.Latitude, country.Longitude, KahaLatitude, KahaLongitude)
         };
     }
 
-    // ── Task 6: Random Southern Hemisphere ────────────────────────────────────
-    public async Task<CountrySummaryModel?> GetRandomSouthernHemisphereCountryAsync()
+    private static string FormatTime(DateTime? utc) =>
+        utc is null ? "N/A" : utc.Value.ToString("hh:mm tt") + " UTC";
+
+    // Pure geometry — no ambient state, safe as a static helper.
+    private static double CalculateHaversineDistanceKm(
+        double lat1, double lon1, double lat2, double lon2)
     {
-        var all = await GetAllCountriesAsync();
-        var southern = all.Where(c => c.IsInSouthernHemisphere).ToList();
-
-        if (southern.Count == 0) return null;
-
-        var picked = southern[Random.Shared.Next(southern.Count)];
-        return await GetCountrySummaryAsync(picked.CommonName);
-    }
-
-    // ── Task 3: Sunrise / Sunset ──────────────────────────────────────────────
-    public async Task<(string Sunrise, string Sunset)> GetSunriseSunsetTimesAsync(
-        double latitude, double longitude)
-    {
-        try
-        {
-            // ✅ FIX: Correct query string (& not &amp;)
-            var url = $"{_options.SunriseSunsetUrl}?lat={latitude}&lng={longitude}&formatted=0";
-
-            var response = await _httpClient.GetStringAsync(url);
-            var obj = JObject.Parse(response);
-
-            if (obj["status"]?.ToString() != "OK")
-            {
-                _logger.LogWarning("Sunrise API non-OK for ({Lat},{Lng})", latitude, longitude);
-                return ("N/A", "N/A");
-            }
-
-            var results = obj["results"]!;
-
-            var sunrise = DateTime.Parse(results["sunrise"]!.ToString(),
-                null, System.Globalization.DateTimeStyles.RoundtripKind);
-
-            var sunset = DateTime.Parse(results["sunset"]!.ToString(),
-                null, System.Globalization.DateTimeStyles.RoundtripKind);
-
-            return (
-                sunrise.ToString("hh:mm tt") + " UTC",
-                sunset.ToString("hh:mm tt") + " UTC"
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Sunrise fetch failed for ({Lat},{Lng})", latitude, longitude);
-            return ("N/A", "N/A");
-        }
-    }
-
-    // ── Task 7: Haversine Distance ────────────────────────────────────────────
-    public static double CalculateHaversineDistanceKm(
-        double lat1, double lon1,
-        double lat2, double lon2)
-    {
-        const double R = 6371.0;
+        const double earthRadiusKm = 6371.0;
 
         var dLat = ToRadians(lat2 - lat1);
         var dLon = ToRadians(lon2 - lon1);
@@ -197,7 +139,7 @@ catch (Exception ex)
               + Math.Cos(ToRadians(lat1)) * Math.Cos(ToRadians(lat2))
               * Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
 
-        return Math.Round(R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a)), 1);
+        return Math.Round(earthRadiusKm * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a)), 1);
     }
 
     private static double ToRadians(double deg) => deg * Math.PI / 180.0;
