@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpLogging;
 using KAHA.TravelBot.NETCoreReactApp.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -7,6 +8,10 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddHttpLogging(o =>
+    o.LoggingFields = HttpLoggingFields.RequestMethod | HttpLoggingFields.RequestPath
+        | HttpLoggingFields.ResponseStatusCode | HttpLoggingFields.Duration);
+
 builder.Services.AddGlobalExceptionHandling();
 builder.Services.AddTravelBot(builder.Configuration);
 
@@ -14,6 +19,7 @@ builder.Services.AddTravelBot(builder.Configuration);
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseHttpLogging();
 
 if (app.Environment.IsDevelopment())
 {
